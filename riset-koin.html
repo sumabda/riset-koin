@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riset Koin Otomatis</title>
+  <style>
+    :root { --bg:#0e1621; --card:#17212f; --teks:#e8eef5; --redup:#93a4b8; --hijau:#2ecc71; --kuning:#f1c40f; --merah:#e74c3c; --biru:#3498db; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Arial, sans-serif; background:var(--bg); color:var(--teks); line-height:1.5; }
+    main { max-width: 720px; margin:auto; padding:16px; }
+    h1 { font-size:22px; margin:8px 0 4px; }
+    .sub { color:var(--redup); font-size:14px; margin-bottom:16px; }
+    form { display:flex; gap:8px; }
+    input { flex:1; padding:12px; border-radius:8px; border:1px solid #2c3b50; background:var(--card); color:var(--teks); font-size:16px; }
+    button { padding:12px 16px; border:0; border-radius:8px; background:var(--biru); color:white; font-size:16px; cursor:pointer; }
+    .pilihan { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
+    .pilihan button { background:var(--card); border:1px solid #2c3b50; font-size:13px; padding:6px 10px; }
+    .card { background:var(--card); border-radius:12px; padding:14px 16px; margin:12px 0; }
+    .card h2 { margin:0 0 8px; font-size:16px; color:var(--biru); }
+    .baris { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #223045; font-size:14px; }
+    .baris:last-child { border-bottom:0; }
+    .baris span:first-child { color:var(--redup); }
+    .head { display:flex; align-items:center; gap:10px; }
+    .head img { width:40px; height:40px; border-radius:50%; }
+    .catatan { padding:6px 0; font-size:14px; }
+    .tautan a { display:inline-block; margin:4px 8px 4px 0; color:var(--biru); font-size:14px; }
+    .status { color:var(--redup); text-align:center; padding:16px; }
+    .error { color:var(--merah); }
+    .disclaimer { font-size:12px; color:var(--redup); margin:20px 0 40px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Riset Koin Otomatis</h1>
+  <div class="sub">Ketik nama atau simbol koin. Data diambil otomatis dari CoinGecko, GoPlus, GitHub, dan DefiLlama.</div>
+
+  <form id="form">
+    <input id="q" placeholder="contoh: solana, pepe, uniswap" autocomplete="off" required>
+    <button type="submit">Riset</button>
+  </form>
+
+  <div id="pilihan" class="pilihan"></div>
+  <div id="hasil"></div>
+
+  <p class="disclaimer">Ini alat bantu informasi, bukan saran keuangan. Data bisa terlambat atau tidak lengkap. Harga crypto sangat naik-turun, jadi gunakan hanya uang yang siap hilang dan selalu cek ulang di sumber resmi.</p>
+</main>
+
+<script>
+const CG = "https://api.coingecko.com/api/v3";
+const $ = id => document.getElementById(id);
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const usd = n => n == null ? "-" : new Intl.NumberFormat("en-US", {style:"currency", currency:"USD", maximumFractionDigits: n < 1 ? 6 : 2}).format(n);
+const num = n => n == null ? "-" : new Intl.NumberFormat("en-US", {notation:"compact", maximumFractionDigits:2}).format(n);
+const pct = n => n == null ? "-" : n.toFixed(2) + "%";
+const baris = (a, b) => `<div class="baris"><span>${a}</span><span>${b}</span></div>`;
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    if (r.status === 429) throw new Error("Batas permintaan gratis tercapai. Tunggu 1 menit lalu coba lagi.");
+    throw new Error("Gagal mengambil data (kode " + r.status + ")");
+  }
+  return r.json();
+}
+
+// Peta nama jaringan CoinGecko -> chain id GoPlus
+const CHAIN = {
+  "ethereum": "1", "binance-smart-chain": "56", "polygon-pos": "137",
+  "arbitrum-one": "42161", "base": "8453", "optimistic-ethereum": "10",
+  "avalanche": "43114"
+};
+const EXPLORER = {
+  "ethereum": "https://etherscan.io/token/", "binance-smart-chain": "https://bscscan.com/token/",
+  "polygon-pos": "https://polygonscan.com/token/", "arbitrum-one": "https://arbiscan.io/token/",
+  "base": "https://basescan.org/token/", "optimistic-ethereum": "https://optimistic.etherscan.io/token/",
+  "avalanche": "https://snowtrace.io/token/", "solana": "https://solscan.io/token/"
+};
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("pilihan").innerHTML = "";
+  $("hasil").innerHTML = '<div class="status">Mencari koin...</div>';
+  try {
+    const s = await getJSON(`${CG}/search?query=${encodeURIComponent(q)}`);
+    const coins = (s.coins || []).slice(0, 6);
+    if (!coins.length) { $("hasil").innerHTML = '<div class="status">Koin tidak ditemukan. Coba nama lain.</div>'; return; }
+    $("pilihan").innerHTML = coins.map(c =>
+      `<button type="button" data-id="${esc(c.id)}">${esc(c.name)} (${esc(c.symbol)})${c.market_cap_rank ? " #" + c.market_cap_rank : ""}</button>`
+    ).join("");
+    document.querySelectorAll("#pilihan button").forEach(b => b.addEventListener("click", () => analisis(b.dataset.id)));
+    analisis(coins[0].id);
+  } catch (err) {
+    $("hasil").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+  }
+});
+
+async function analisis(id) {
+  $("hasil").innerHTML = '<div class="status">Mengambil data dari beberapa situs...</div>';
+  let coin;
+  try {
+    coin = await getJSON(`${CG}/coins/${encodeURIComponent(id)}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`);
+  } catch (err) {
+    $("hasil").innerHTML = `<div class="status error">${esc(err.message)}</div>`;
+    return;
+  }
+
+  const m = coin.market_data || {};
+  const catatan = [];
+  const tambah = (ok, teks) => catatan.push(`<div class="catatan">${ok === true ? "✅" : ok === false ? "⚠️" : "ℹ️"} ${teks}</div>`);
+
+  // --- Bagian pasar ---
+  const mcap = m.market_cap?.usd, vol = m.total_volume?.usd;
+  const circ = m.circulating_supply, total = m.total_supply, max = m.max_supply;
+  const dasar = max || total;
+  const persenBeredar = dasar && circ ? (circ / dasar) * 100 : null;
+
+  let html = `
+    <div class="card">
+      <div class="head">
+        <img src="${esc(coin.image?.small)}" alt="">
+        <div><strong>${esc(coin.name)}</strong> (${esc((coin.symbol || "").toUpperCase())})<br>
+        <span style="color:var(--redup);font-size:13px">Peringkat #${coin.market_cap_rank ?? "-"}</span></div>
+      </div>
+    </div>
+    <div class="card"><h2>Pasar (CoinGecko)</h2>
+      ${baris("Harga", usd(m.current_price?.usd))}
+      ${baris("Perubahan 24 jam", pct(m.price_change_percentage_24h))}
+      ${baris("Perubahan 7 hari", pct(m.price_change_percentage_7d))}
+      ${baris("Perubahan 30 hari", pct(m.price_change_percentage_30d))}
+      ${baris("Kapitalisasi pasar", "$" + num(mcap))}
+      ${baris("Volume 24 jam", "$" + num(vol))}
+      ${baris("Suplai beredar", num(circ))}
+      ${baris("Suplai total / maksimum", num(total) + " / " + (max ? num(max) : "tak terbatas"))}
+      ${baris("Harga tertinggi sepanjang masa", usd(m.ath?.usd))}
+      ${baris("Jarak dari harga tertinggi", pct(m.ath_change_percentage?.usd))}
+    </div>`;
+
+  // --- Catatan otomatis dari data pasar ---
+  if (!mcap || coin.market_cap_rank == null) tambah(false, "Kapitalisasi pasar tidak tercatat. Koin sangat kecil atau belum jelas, risiko tinggi.");
+  else if (coin.market_cap_rank > 500) tambah(false, "Peringkat di luar 500 besar. Biasanya lebih sulit dijual dan lebih mudah dimanipulasi.");
+  else tambah(true, "Peringkat termasuk 500 besar.");
+
+  if (mcap && vol != null) {
+    const rasio = (vol / mcap) * 100;
+    if (rasio < 1) tambah(false, `Volume harian hanya ${rasio.toFixed(2)}% dari kapitalisasi pasar. Likuiditas tipis.`);
+    else tambah(true, `Volume harian ${rasio.toFixed(1)}% dari kapitalisasi pasar.`);
+  }
+  if (persenBeredar != null) {
+    if (persenBeredar < 50) tambah(false, `Baru ${persenBeredar.toFixed(0)}% token beredar. Sisanya bisa dibuka bertahap dan menekan harga (cek jadwal unlock).`);
+    else tambah(true, `${persenBeredar.toFixed(0)}% token sudah beredar.`);
+  }
+  if (m.ath_change_percentage?.usd != null && m.ath_change_percentage.usd < -80)
+    tambah(false, "Harga sudah turun lebih dari 80% dari puncaknya.");
+
+  $("hasil").innerHTML = html + '<div id="kartu-ekstra"><div class="status">Mengecek keamanan, GitHub, dan DefiLlama...</div></div>';
+
+  // --- Ambil data tambahan secara paralel ---
+  const platforms = Object.entries(coin.platforms || {}).filter(([k, v]) => v);
+  const repo = (coin.links?.repos_url?.github || []).find(x => x);
+
+  const [sec, gh, llama] = await Promise.allSettled([
+    cekKeamanan(platforms),
+    cekGithub(repo),
+    cekDefiLlama(id)
+  ]);
+
+  let ekstra = "";
+
+  // Keamanan kontrak
+  if (sec.status === "fulfilled") {
+    ekstra += sec.value.html;
+    sec.value.notes.forEach(n => catatan.push(n));
+  } else {
+    ekstra += `<div class="card"><h2>Keamanan Kontrak (GoPlus)</h2><div class="catatan">Gagal mengambil data: ${esc(sec.reason.message)}</div></div>`;
+  }
+
+  // GitHub
+  if (gh.status === "fulfilled") {
+    ekstra += gh.value.html;
+    gh.value.notes.forEach(n => catatan.push(n));
+  } else {
+    ekstra += `<div class="card"><h2>Aktivitas Kode (GitHub)</h2><div class="catatan">Gagal mengambil data: ${esc(gh.reason.message)}</div></div>`;
+  }
+
+  // DefiLlama
+  if (llama.status === "fulfilled") ekstra += llama.value.html;
+
+  // Catatan ringkas
+  ekstra += `<div class="card"><h2>Catatan Otomatis</h2>${catatan.join("")}</div>`;
+
+  // Tautan untuk cek manual (data yang tidak punya API gratis)
+  const nama = encodeURIComponent(coin.name);
+  const links = [
+    [`Halaman CoinGecko`, `https://www.coingecko.com/en/coins/${encodeURIComponent(id)}`],
+    [`Jadwal unlock (Tokenomist)`, `https://tokenomist.ai/`],
+    [`Laporan audit (CertiK)`, `https://skynet.certik.com/`],
+    [`Cari: ${coin.name} audit`, `https://www.google.com/search?q=${nama}+audit+report`],
+    [`Cari: ${coin.name} scam`, `https://www.google.com/search?q=${nama}+scam+rug+pull`],
+    [`Cari: ${coin.name} tokenomics`, `https://www.google.com/search?q=${nama}+tokenomics+unlock+schedule`],
+    [`Berita (CoinDesk)`, `https://www.coindesk.com/search?s=${nama}`]
+  ];
+  platforms.slice(0, 3).forEach(([chain, addr]) => {
+    if (EXPLORER[chain]) links.push([`Lihat kontrak (${chain})`, EXPLORER[chain] + addr]);
+  });
+  ekstra += `<div class="card"><h2>Cek Manual (tidak ada data gratis otomatis)</h2><div class="tautan">${
+    links.map(([t, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`).join("")
+  }</div></div>`;
+
+  $("kartu-ekstra").innerHTML = ekstra;
+}
+
+async function cekKeamanan(platforms) {
+  const notes = [];
+  const dukung = platforms.filter(([k]) => CHAIN[k]).slice(0, 2);
+  if (!platforms.length) {
+    return { html: `<div class="card"><h2>Keamanan Kontrak (GoPlus)</h2><div class="catatan">ℹ️ Koin ini tampaknya koin asli blockchain-nya sendiri (tanpa kontrak token), jadi cek ini tidak berlaku.</div></div>`, notes };
+  }
+  if (!dukung.length) {
+    return { html: `<div class="card"><h2>Keamanan Kontrak (GoPlus)</h2><div class="catatan">ℹ️ Jaringan koin ini belum didukung pengecekan otomatis di alat ini. Gunakan RugCheck atau explorer secara manual.</div></div>`, notes };
+  }
+  let isi = "";
+  for (const [chain, addr] of dukung) {
+    const r = await getJSON(`https://api.gopluslabs.io/api/v1/token_security/${CHAIN[chain]}?contract_addresses=${addr}`);
+    const d = r.result?.[addr.toLowerCase()];
+    if (!d) { isi += `<div class="catatan">ℹ️ ${esc(chain)}: data keamanan belum tersedia.</div>`; continue; }
+    const ya = v => v === "1" ? "Ya" : v === "0" ? "Tidak" : "-";
+    isi += `<div style="margin-top:6px"><strong>${esc(chain)}</strong></div>` +
+      baris("Honeypot (tidak bisa dijual)", ya(d.is_honeypot)) +
+      baris("Kode terbuka (open source)", ya(d.is_open_source)) +
+      baris("Bisa mencetak token baru", ya(d.is_mintable)) +
+      baris("Kontrak bisa diubah (proxy)", ya(d.is_proxy)) +
+      baris("Pajak beli / jual", `${d.buy_tax ? (d.buy_tax * 100).toFixed(1) : "-"}% / ${d.sell_tax ? (d.sell_tax * 100).toFixed(1) : "-"}%`) +
+      baris("Jumlah pemegang", d.holder_count ? Number(d.holder_count).toLocaleString("id-ID") : "-");
+    if (d.is_honeypot === "1") notes.push(`<div class="catatan">⚠️ BAHAYA: terdeteksi honeypot di ${esc(chain)}. Jangan beli.</div>`);
+    if (d.is_open_source === "0") notes.push(`<div class="catatan">⚠️ Kode kontrak di ${esc(chain)} tidak terbuka, tidak bisa diperiksa.</div>`);
+    if (d.is_mintable === "1") notes.push(`<div class="catatan">⚠️ Kontrak di ${esc(chain)} bisa mencetak token baru, bisa mengencerkan nilai.</div>`);
+    if (parseFloat(d.sell_tax) > 0.1) notes.push(`<div class="catatan">⚠️ Pajak jual di ${esc(chain)} di atas 10%.</div>`);
+  }
+  return { html: `<div class="card"><h2>Keamanan Kontrak (GoPlus)</h2>${isi}</div>`, notes };
+}
+
+async function cekGithub(url) {
+  const notes = [];
+  if (!url) {
+    notes.push(`<div class="catatan">ℹ️ Tidak ada tautan GitHub resmi di CoinGecko. Cek manual apakah proyek punya kode terbuka.</div>`);
+    return { html: "", notes };
+  }
+  const mm = url.match(/github\.com\/([^\/]+)\/([^\/?#]+)/i);
+  if (!mm) return { html: "", notes };
+  const d = await getJSON(`https://api.github.com/repos/${mm[1]}/${mm[2].replace(/\.git$/, "")}`);
+  const hari = Math.floor((Date.now() - new Date(d.pushed_at).getTime()) / 86400000);
+  if (hari > 180) notes.push(`<div class="catatan">⚠️ Kode terakhir diperbarui ${hari} hari lalu. Pengembangan tampak sepi.</div>`);
+  else notes.push(`<div class="catatan">✅ Kode terakhir diperbarui ${hari} hari lalu.</div>`);
+  const html = `<div class="card"><h2>Aktivitas Kode (GitHub)</h2>
+    ${baris("Repository", `<a style="color:var(--biru)" href="${esc(d.html_url)}" target="_blank" rel="noopener">${esc(d.full_name)}</a>`)}
+    ${baris("Terakhir diperbarui", hari + " hari lalu")}
+    ${baris("Bintang / Fork", d.stargazers_count.toLocaleString("id-ID") + " / " + d.forks_count.toLocaleString("id-ID"))}
+    ${baris("Isu terbuka", d.open_issues_count.toLocaleString("id-ID"))}
+  </div>`;
+  return { html, notes };
+}
+
+async function cekDefiLlama(geckoId) {
+  const list = await getJSON("https://api.llama.fi/protocols");
+  const p = list.find(x => x.gecko_id === geckoId);
+  if (!p) return { html: "" };
+  const html = `<div class="card"><h2>Data DeFi (DefiLlama)</h2>
+    ${baris("Protokol", esc(p.name))}
+    ${baris("Kategori", esc(p.category))}
+    ${baris("Total dana dikunci (TVL)", "$" + num(p.tvl))}
+    ${baris("Perubahan TVL 7 hari", pct(p.change_7d))}
+    ${baris("Jaringan", esc((p.chains || []).slice(0, 5).join(", ")))}
+  </div>`;
+  return { html };
+}
+</script>
+</body>
+</html>
